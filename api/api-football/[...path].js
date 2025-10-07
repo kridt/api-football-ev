@@ -1,5 +1,5 @@
 // Vercel Serverless Function (Node.js 18+)
-// Robust path-udtræk der virker på Vercel uanset query-parsing.
+// Robust path-parsing + sanitering af Vercel's "__path" query.
 
 const UPSTREAM = "https://v3.football.api-sports.io";
 
@@ -17,27 +17,29 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method Not Allowed" });
 
   try {
-    // Eksempel: req.url = /api/api-football/fixtures?league=525&next=15
-    const urlStr = req.url || "";
-    // Fjern prefix /api/api-football/
+    // Eksempel: /api/api-football/fixtures?league=525&next=15
+    // eller (pga. nogle frameworks): /api/api-football?__path=fixtures&league=525
+    const fullUrl = new URL(req.url, "http://localhost"); // base kræves bare for parsing
     const prefix = "/api/api-football/";
-    const idx = urlStr.indexOf(prefix);
-    let tail =
-      idx >= 0 ? urlStr.slice(idx + prefix.length) : urlStr.replace(/^\/+/, "");
-
-    // Split i path + query
-    const qIdx = tail.indexOf("?");
-    const path = (qIdx === -1 ? tail : tail.slice(0, qIdx)).replace(
-      /^\/+|\/+$/g,
-      ""
-    ); // "fixtures" / "leagues"
-    const qs = qIdx === -1 ? "" : tail.slice(qIdx); // fx "?league=525&next=15"
-
-    if (!path) {
-      return res.status(400).json({ error: "Missing endpoint path" });
+    let path = "";
+    if (fullUrl.pathname.startsWith(prefix)) {
+      path = fullUrl.pathname.slice(prefix.length).replace(/^\/+|\/+$/g, ""); // "fixtures" / "leagues"
     }
 
-    const targetUrl = `${UPSTREAM}/${path}${qs}`;
+    // Hvis path ikke lå i pathname, så kig efter __path fx "?__path=fixtures"
+    if (!path) {
+      const qpPath =
+        fullUrl.searchParams.get("__path") || fullUrl.searchParams.get("path");
+      if (qpPath) path = qpPath.replace(/^\/+|\/+$/g, "");
+    }
+    if (!path) return res.status(400).json({ error: "Missing endpoint path" });
+
+    // Saniter query: fjern __path og path inden vi sender til upstream
+    const sp = fullUrl.searchParams;
+    sp.delete("__path");
+    sp.delete("path");
+    const qs = sp.toString();
+    const targetUrl = `${UPSTREAM}/${path}${qs ? `?${qs}` : ""}`;
 
     const apiKey = process.env.API_FOOTBALL_KEY;
     if (!apiKey)
@@ -47,13 +49,13 @@ export default async function handler(req, res) {
 
     const upstreamRes = await fetch(targetUrl, {
       headers: {
-        "x-apisports-key": apiKey, // KORREKT header til API-Football v3
+        "x-apisports-key": apiKey, // korrekt header til API-Football v3
         Accept: "application/json",
       },
     });
 
     const text = await upstreamRes.text();
-    console.log("[proxy] <-", upstreamRes.status, (text || "").slice(0, 120));
+    console.log("[proxy] <-", upstreamRes.status, (text || "").slice(0, 140));
 
     res.status(upstreamRes.status);
     res.setHeader(
