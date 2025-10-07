@@ -1,5 +1,7 @@
-// --- BASE / HEADERS (som i din seneste version) -----------------------------
+// --- BASE / HEADERS ---------------------------------------------------------
 const RAW_BASE = (import.meta.env.VITE_API_FOOTBALL_BASE ?? "").trim();
+// Default til Vercel serverless route (ikke dev-proxy)
+const DEFAULT_BASE = "/api/api-football/";
 const KEY = import.meta.env.VITE_API_FOOTBALL_KEY;
 const TZ = import.meta.env.VITE_TZ || "Europe/Copenhagen";
 const LOG = true;
@@ -8,8 +10,7 @@ function isAbsolute(url) {
   return /^https?:\/\//i.test(url);
 }
 function normBase(raw) {
-  if (!raw) return "/api-football/";
-  let b = raw;
+  let b = raw || DEFAULT_BASE;
   if (!isAbsolute(b) && !b.startsWith("/")) b = "/" + b;
   if (!b.endsWith("/")) b += "/";
   return b;
@@ -33,7 +34,7 @@ function buildUrl(path, params = {}) {
 
 function headers() {
   const h = {};
-  if (KEY) h["x-apisports-key"] = KEY;
+  if (KEY) h["x-apisports-key"] = KEY; // i prod bruges serverless-nøglen; her gør det ikke skade
   return h;
 }
 
@@ -41,12 +42,22 @@ async function request(path, params = {}) {
   const url = buildUrl(path, params);
   LOG && console.log("[API request]", url);
   const res = await fetch(url, { headers: headers() });
+
+  const text = await res.text().catch(() => "");
   if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    console.warn("[API error]", res.status, txt?.slice(0, 400));
+    console.warn("[API error]", res.status, text?.slice(0, 400));
     throw new Error(`API error ${res.status}`);
   }
-  const json = await res.json();
+
+  // prøv at parse som JSON – fallback til tomt objekt med debug
+  let json;
+  try {
+    json = text ? JSON.parse(text) : {};
+  } catch (e) {
+    console.warn("[API warn] Non-JSON body received:", text?.slice(0, 120));
+    json = {};
+  }
+
   LOG &&
     console.log(
       "[API response]",
@@ -71,10 +82,8 @@ export async function fetchLeagueMetaWithSeasons(id) {
   return r.response?.[0] || null;
 }
 
-/* ---------- Fixtures: NEXT per league (uden season) ---------- */
-/** Hent de næste N fixtures for en liga (uden season). */
+/* ---------- Fixtures: NEXT per league ---------- */
 export async function fetchLeagueNext({ league, next = 50 }) {
-  // bevidst INGEN timezone her; API leverer UTC timestamps, som vi filtrerer på lokalt
   return request("/fixtures", { league, next });
 }
 
