@@ -1,5 +1,6 @@
 // Vercel Serverless Function (Node.js 18+)
 // Placeret under /api for at kunne tilgås som https://<app>/api/api-football/...
+console.log("API_FOOTBALL_KEY present:", !!process.env.API_FOOTBALL_KEY);
 
 const UPSTREAM = "https://v3.football.api-sports.io";
 
